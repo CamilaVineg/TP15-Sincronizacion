@@ -1,0 +1,21 @@
+# Compilados y binarios
+*.exe
+*.o
+*.obj
+*.out
+*.dll
+*.so
+*.dylib
+bin/
+build/
+
+# VS Code / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Sistema operativo
+Thumbs.db
+Desktop.ini
+.DS_Store
