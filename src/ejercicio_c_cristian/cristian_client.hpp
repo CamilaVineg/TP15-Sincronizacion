@@ -1,5 +1,9 @@
 #pragma once
 
+// Cliente del método de Cristian
+// Envía una petición al servidor con T0 (su reloj), recibe respuesta con T_recv/T_send
+// Calcula RTT, estima T_nuevo = T_send + RTT_neto/2 y ajusta su reloj local.
+
 #include "cristian_common.hpp"
 
 namespace cristian {
@@ -8,7 +12,7 @@ class CristianClient {
 private:
     std::string server_ip;
     uint16_t server_port;
-    LocalClock clock;
+    LocalClock clock; // Reloj local simulado (puede estar atrasado/adelantado)
 
 public:
     CristianClient(std::string ip = "127.0.0.1", uint16_t port = DEFAULT_PORT, int64_t initial_drift_ms = 4500)
@@ -16,7 +20,10 @@ public:
 
     LocalClock& get_clock() { return clock; }
 
-    // Ejecuta una sincronización individual
+    // Ejecuta una sincronización individual siguiendo el método de Cristian
+    // apply_adjustment: si true, aplica el offset calculado al reloj local
+    // use_slewing: si true y el reloj está adelantado (offset < 0), usa ajuste gradual para no retroceder
+    // estimated_tmin: estimado mínimo de latencia en un sentido (para calcular cota de error)
     bool sync_once(bool apply_adjustment = true, bool use_slewing = false, int64_t estimated_tmin = 1) {
         if (!socket_init()) {
             std::cerr << "[ERROR] Falló la inicialización de sockets del sistema." << std::endl;
@@ -67,6 +74,7 @@ public:
         sockaddr_in from_addr{};
         socklen_val_t from_len = sizeof(from_addr);
 
+        // Esperamos la respuesta del servidor
         int recvd = recvfrom(sock, reinterpret_cast<char*>(&resp), sizeof(resp), 0,
                              reinterpret_cast<sockaddr*>(&from_addr), &from_len);
 
@@ -82,6 +90,7 @@ public:
         }
 
         resp.t1_client_recv = t1;
+        // Aplicamos el algoritmo de Cristian con los cuatro tiempos
         SyncResult sr = calculate_cristian(t0, resp.t_server_recv, resp.t_server_send, t1, estimated_tmin);
 
         print_sync_report(sr);
@@ -90,10 +99,11 @@ public:
             std::cout << "\n>>> APLICANDO AJUSTE DE RELOJ AL CLIENTE <<<" << std::endl;
             std::cout << "  Reloj antes del ajuste:  " << format_time_ms(clock.now_ms()) << std::endl;
             if (use_slewing && sr.offset < 0) {
-                // Si el reloj local está adelantado, Cristian sugiere ralentizar la frecuencia (slewing)
+                // Offset negativo = reloj del cliente adelantado -> para no retrocederlo, usamos ajuste gradual
                 std::cout << "  Aviso: Offset negativo detectado (reloj adelantado). Aplicando slewing para no retroceder el reloj..." << std::endl;
                 clock.slew_adjust(sr.offset, 3);
             } else {
+                // Offset positivo o cero, o sin slewing: ajuste directo por salto
                 clock.step_adjust(sr.offset);
             }
             std::cout << "  Reloj después del ajuste: " << format_time_ms(clock.now_ms()) << std::endl;
@@ -103,7 +113,8 @@ public:
         return true;
     }
 
-    // Algoritmo de Cristian con muestreo múltiple (filtro de menor RTT)
+    // Variante: enviar varias peticiones y quedarse con la que tenga menor RTT neto
+    // Esto reduce el error porque el menor RTT significa menor tiempo en colas/asimetrías
     void sync_best_of_n(int num_samples = 5, int64_t estimated_tmin = 1) {
         std::cout << "\n========================================================" << std::endl;
         std::cout << "   ALGORITMO DE CRISTIAN CON FILTRO DE MÚLTIPLES MUESTRAS" << std::endl;
@@ -174,7 +185,7 @@ public:
             return;
         }
 
-        // Selección de la muestra con el menor RTT (menor tiempo de espera en cola, menor error)
+        // Seleccionamos la muestra con menor RTT neto: esto suele dar menor incertidumbre
         auto best_it = std::min_element(samples.begin(), samples.end(),
                                         [](const SyncResult& a, const SyncResult& b) {
                                             return a.rtt_net < b.rtt_net;
@@ -182,6 +193,7 @@ public:
 
         std::cout << "\n========================================================" << std::endl;
         std::cout << "   RESULTADO DE LA MEJOR MUESTRA SELECCIONADA" << std::endl;
+        std::cout << "   (Criterio: menor RTT neto -> menor error estimado)" << std::endl;
         std::cout << "========================================================" << std::endl;
         print_sync_report(*best_it);
 
@@ -191,6 +203,7 @@ public:
     }
 
 private:
+    // Imprime el paso a paso del cálculo para entenderlo fácilmente
     void print_sync_report(const SyncResult& sr) {
         std::cout << "\n--------------------------------------------------------\n"
                   << "  INFORME DETALLADO - MÉTODO DE CRISTIAN\n"

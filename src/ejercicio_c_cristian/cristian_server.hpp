@@ -1,5 +1,9 @@
 #pragma once
 
+// Servidor de tiempo para el método de Cristian
+// Tiene un "reloj autoritativo" (usamos el reloj del sistema) y responde a las peticiones
+// devolviendo T_recv y T_send para que el cliente calcule RTT y haga la estimación.
+
 #include "cristian_common.hpp"
 #include <atomic>
 
@@ -55,7 +59,7 @@ public:
         std::cout << "========================================================\n"
                   << "   SERVIDOR DE TIEMPO DE CRISTIAN ACTIVO\n"
                   << "   Puerto UDP: " << port << "\n"
-                  << "   Fuente de reloj: Reloj del Sistema (Alta Precisión)\n"
+                  << "   Fuente de reloj: Reloj del Sistema (usado como referencia)\n"
                   << "   Esperando solicitudes de clientes...\n"
                   << "========================================================\n" << std::endl;
 
@@ -64,6 +68,7 @@ public:
             sockaddr_in client_addr{};
             socklen_val_t client_addr_len = sizeof(client_addr);
 
+            // Esperar una petición del cliente
             int bytes_received = recvfrom(server_sock, reinterpret_cast<char*>(&req), sizeof(req), 0,
                                           reinterpret_cast<sockaddr*>(&client_addr), &client_addr_len);
 
@@ -72,8 +77,10 @@ public:
                 continue;
             }
 
+            // Registrar el momento exacto en que llega la petición (según reloj del servidor)
             int64_t t_recv = get_system_time_ms();
 
+            // Validar que sea un paquete válido del protocolo
             if (req.magic != PROTOCOL_MAGIC || req.type != MSG_REQUEST) {
                 std::cout << "[WARN] Paquete inválido recibido desde cliente." << std::endl;
                 continue;
@@ -83,18 +90,19 @@ public:
             inet_ntop(AF_INET, &(client_addr.sin_addr), client_ip, INET_ADDRSTRLEN);
             uint16_t client_port = ntohs(client_addr.sin_port);
 
-            // Simulación opcional de breve tiempo de procesamiento interno en el servidor
+            // Simulamos un pequeño tiempo de procesamiento interno (opcional, pero ayuda a ver el cálculo de I)
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            // Registrar el momento en que enviamos la respuesta
             int64_t t_send = get_system_time_ms();
 
-            // Preparar respuesta
+            // Preparar respuesta con los tiempos del servidor
             Packet resp{};
             resp.magic = PROTOCOL_MAGIC;
             resp.type = MSG_RESPONSE;
-            resp.t0_client_send = req.t0_client_send;
-            resp.t_server_recv = t_recv;
-            resp.t_server_send = t_send;
-            resp.t1_client_recv = 0; // Se completará al llegar al cliente
+            resp.t0_client_send = req.t0_client_send; // devolvemos T0 tal como lo envió el cliente
+            resp.t_server_recv  = t_recv;
+            resp.t_server_send  = t_send;
+            resp.t1_client_recv = 0; // el cliente lo completará cuando reciba la respuesta
 
             sendto(server_sock, reinterpret_cast<const char*>(&resp), sizeof(resp), 0,
                    reinterpret_cast<sockaddr*>(&client_addr), client_addr_len);

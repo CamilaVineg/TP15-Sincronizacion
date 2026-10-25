@@ -1,11 +1,15 @@
 #pragma once
 
+// Simulación didáctica del método de Cristian
+// Útil para entender visualmente el algoritmo sin necesidad de red real.
+
 #include "cristian_common.hpp"
 
 namespace cristian {
 
 class CristianSimulation {
 public:
+    // Ejecuta una demo completa con varios casos para entender el algoritmo
     static void run_full_demo() {
         std::cout << "\n======================================================================\n"
                   << "  DEMOSTRACIÓN INTERACTIVA: ALGORITMO DE SINCRONIZACIÓN DE CRISTIAN\n"
@@ -21,13 +25,14 @@ public:
                   << "   - Ajuste necesario: Offset = T_nuevo - T1.\n"
                   << "   - Precisión alcanzada: +-((RTT / 2) - T_min).\n\n";
 
-        // Caso 1: Sincronización básica con compensación de RTT
+        // Caso 1: Cliente con reloj atrasado. Necesita sumar el offset.
         std::cout << "----------------------------------------------------------------------\n";
         std::cout << "CASO 1: CLIENTE CON RELOJ ATRASADO (-5000 ms) Y LATENCIA SIMÉTRICA\n";
         std::cout << "----------------------------------------------------------------------\n";
         simulate_node("Cliente_Alfa", -5000, 25, 25, 3, 5);
 
-        // Caso 2: Cliente adelantado con ajuste gradual (slewing)
+        // Caso 2: Cliente con reloj adelantado. Si hacemos un salto hacia atrás estaría mal,
+        // por eso usamos slewing (cambiar frecuencia) para "esperar" hasta alcanzar la hora correcta
         std::cout << "\n----------------------------------------------------------------------\n";
         std::cout << "CASO 2: CLIENTE CON RELOJ ADELANTADO (+3500 ms) Y AMORTIZACIÓN (SLEWING)\n";
         std::cout << "----------------------------------------------------------------------\n";
@@ -53,6 +58,7 @@ public:
     }
 
 private:
+    // Simula el intercambio: cliente envía a T0, red+servidor devuelven tiempos, cliente calcula offset
     static void simulate_node(const std::string& name, int64_t initial_offset, 
                               int64_t forward_delay_ms, int64_t backward_delay_ms, 
                               int64_t server_proc_ms, int64_t t_min, bool demo_slew = false) {
@@ -64,22 +70,22 @@ private:
         std::cout << "      Reloj Local (Cliente):  " << format_time_ms(client_clock.now_ms()) 
                   << " (Desfase inicial: " << initial_offset << " ms)\n";
 
-        // T0: Momento en que el cliente despacha la petición
+        // T0: Cliente envía la petición (medido con su reloj local)
         int64_t t0 = client_clock.now_ms();
         int64_t real_at_t0 = get_system_time_ms();
 
-        // Tránsito de red (Ida)
+        // Ida: petición viaja al servidor
         int64_t real_at_server_recv = real_at_t0 + forward_delay_ms;
-        int64_t t_server_recv = real_at_server_recv; // El servidor tiene el reloj real
+        int64_t t_server_recv = real_at_server_recv; // Servidor usa reloj de referencia
 
-        // Procesamiento en el servidor
+        // Servidor procesa la petición
         int64_t real_at_server_send = real_at_server_recv + server_proc_ms;
         int64_t t_server_send = real_at_server_send;
 
-        // Tránsito de red (Vuelta)
+        // Vuelta: respuesta llega al cliente
         int64_t real_at_t1 = real_at_server_send + backward_delay_ms;
         
-        // El reloj del cliente avanza durante el tiempo transcurrido (RTT físico)
+        // T1: Cliente recibe la respuesta. Su reloj avanzó según el tiempo físico transcurrido
         int64_t elapsed_physical = real_at_t1 - real_at_t0;
         int64_t t1 = t0 + elapsed_physical;
 
@@ -97,10 +103,12 @@ private:
         std::cout << "      - Cota teórica de error:   +-" << std::fixed << std::setprecision(1) << sr.error_bound << " ms\n";
 
         if (demo_slew && sr.offset < 0) {
+            // Reloj adelantado -> no podemos retroceder, usamos slewing (cambiar frecuencia temporalmente)
             std::cout << "\n      [Aplicando Corrección por Slewing]:\n";
-            std::cout << "      Como el offset es negativo (" << sr.offset << " ms), se ralentiza el reloj para no volver atrás en el tiempo.\n";
+            std::cout << "      Como el offset es negativo (" << sr.offset << " ms), el reloj está adelantado. Se ralentiza para no retroceder.\n";
             client_clock.slew_adjust(sr.offset, 2);
         } else {
+            // Reloj atrasado (offset > 0) o sin slewing -> ajuste por salto
             client_clock.step_adjust(sr.offset);
         }
 
@@ -109,6 +117,7 @@ private:
         std::cout << "      -> Error residual real:            " << (client_clock.now_ms() - real_after) << " ms\n";
     }
 
+    // Muestra por qué Cristian asume simetría (ida=vuelta) y qué pasa si no es cierto
     static void simulate_asymmetric_analysis() {
         int64_t rtt_net = 60; // 60 ms totales de red
         // Supongamos que la ida tardó 10ms y la vuelta 50ms (por ruteo asimétrico o cola de descarga)
@@ -135,6 +144,7 @@ private:
                   << "  Conclusión: La precisión del algoritmo de Cristian depende de la simetría de la red.\n";
     }
 
+    // Muestra cómo seleccionar la muestra con menor RTT mejora la precisión
     static void simulate_multi_sample_filter() {
         std::cout << "  Simulando 5 solicitudes sucesivas con congestión variable en el canal:\n\n";
         struct SampleSim {
